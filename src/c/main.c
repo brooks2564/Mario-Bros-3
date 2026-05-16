@@ -18,11 +18,12 @@ static const int STEP_GOALS[] = {5000, 8000, 10000, 15000, 20000};
 #define PERSIST_KEY_GOAL 0
 
 /* ── Mario animation ───────────────────────────────────────── */
-#define MARIO_X          30   /* fixed screen X for Mario            */
-#define ANIM_INTERVAL    80   /* ms per animation frame              */
-#define FLICK_ANIM_FRAMES 20  /* walk frames to show after a flick   */
-/* Each flick advances 20% of the level scroll range */
-#define FLICK_SCROLL_PX  (LEVEL_SCROLL_W / 5)
+#define MARIO_X           30  /* fixed screen X for Mario            */
+#define ANIM_INTERVAL     80  /* ms per animation frame (12.5 fps)   */
+/* Mario runs at 7px per frame (~87px/s ≈ 5.5 tiles/s, close to NES speed) */
+#define RUN_PX_PER_FRAME   7
+/* Each wrist flick queues up 20% of the total scrollable level */
+#define FLICK_SCROLL_PX   (LEVEL_SCROLL_W / 5)
 
 /* ── Resource IDs for level strips ────────────────────────── */
 static const uint32_t STRIP_RES[15] = {
@@ -57,8 +58,8 @@ static GBitmap    *s_strip_bmp[2];
 static GBitmap    *s_sprite[6];
 static int         s_sprite_h[6];
 static int         s_anim_frame        = 0;
-static int         s_anim_frames_left  = 0; /* >0 = walk cycle running  */
-static int         s_scroll_bonus      = 0; /* extra px from wrist flicks */
+static int         s_scroll_bonus      = 0; /* px already advanced by flicks */
+static int         s_scroll_remaining  = 0; /* px still to run from queued flicks */
 
 /* HUD data */
 static int         s_battery     = 100;
@@ -164,7 +165,7 @@ static void draw_layer(Layer *layer, GContext *ctx) {
 
     /* 3. Mario — GCompOpSet respects the transparent palette entry */
     int sp_idx;
-    if (s_anim_frames_left > 0) {
+    if (s_scroll_remaining > 0) {
         static const int wmap[] = {MARIO_WALK1, MARIO_WALK2, MARIO_WALK3, MARIO_WALK4};
         sp_idx = wmap[s_anim_frame % 4];
     } else {
@@ -237,12 +238,20 @@ static void draw_layer(Layer *layer, GContext *ctx) {
     }
 }
 
-/* ── Animation timer — only runs while walk animation is active ── */
+/* ── Animation timer — only runs while Mario is running or overlay showing ── */
 static void anim_callback(void *ctx) {
     s_anim_timer = NULL;
 
-    if (s_anim_frames_left > 0) {
-        s_anim_frames_left--;
+    if (s_scroll_remaining > 0) {
+        /* advance scroll by one run step */
+        int step = s_scroll_remaining < RUN_PX_PER_FRAME ? s_scroll_remaining : RUN_PX_PER_FRAME;
+        /* don't scroll past end of level */
+        int max_bonus = LEVEL_SCROLL_W - s_scroll_x;
+        if (s_scroll_bonus + step > max_bonus) step = max_bonus - s_scroll_bonus;
+        if (step < 0) step = 0;
+        s_scroll_bonus    += step;
+        s_scroll_remaining -= step;
+        if (s_scroll_remaining < 0) s_scroll_remaining = 0;
         s_anim_frame = (s_anim_frame + 1) % 4;
     }
 
@@ -253,8 +262,7 @@ static void anim_callback(void *ctx) {
 
     layer_mark_dirty(s_canvas);
 
-    /* keep ticking while animation or overlay is still active */
-    if (s_anim_frames_left > 0 || s_show_goal) {
+    if (s_scroll_remaining > 0 || s_show_goal) {
         s_anim_timer = app_timer_register(ANIM_INTERVAL, anim_callback, NULL);
     }
 }
@@ -304,13 +312,13 @@ static void ensure_timer(void) {
     }
 }
 
-/* ── AccelTap → advance 20% of scroll + run animation ──────────── */
+/* ── AccelTap → queue 20% of level distance to run through ─────── */
 static void tap_handler(AccelAxisType axis, int32_t direction) {
-    s_scroll_bonus += FLICK_SCROLL_PX;
-    if (s_scroll_x + s_scroll_bonus > LEVEL_SCROLL_W) {
-        s_scroll_bonus = LEVEL_SCROLL_W - s_scroll_x;
-    }
-    s_anim_frames_left = FLICK_ANIM_FRAMES;
+    /* queue up 20% more distance; cap so we don't run past the end */
+    int headroom = LEVEL_SCROLL_W - s_scroll_x - s_scroll_bonus - s_scroll_remaining;
+    int add = FLICK_SCROLL_PX < headroom ? FLICK_SCROLL_PX : headroom;
+    if (add < 0) add = 0;
+    s_scroll_remaining += add;
     ensure_timer();
 }
 
@@ -318,7 +326,8 @@ static void tap_handler(AccelAxisType axis, int32_t direction) {
 static void up_click(ClickRecognizerRef rec, void *ctx) {
     s_step_goal_idx = (s_step_goal_idx + 1) % STEP_GOAL_COUNT;
     persist_write_int(PERSIST_KEY_GOAL, s_step_goal_idx);
-    s_scroll_bonus = 0;  /* reset bonus when goal changes */
+    s_scroll_bonus = 0;
+    s_scroll_remaining = 0;
     update_scroll();
     s_show_goal = true;
     s_goal_ms   = 2000;
@@ -329,6 +338,7 @@ static void down_click(ClickRecognizerRef rec, void *ctx) {
     s_step_goal_idx = (s_step_goal_idx + STEP_GOAL_COUNT - 1) % STEP_GOAL_COUNT;
     persist_write_int(PERSIST_KEY_GOAL, s_step_goal_idx);
     s_scroll_bonus = 0;
+    s_scroll_remaining = 0;
     update_scroll();
     s_show_goal = true;
     s_goal_ms   = 2000;
