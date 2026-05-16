@@ -17,11 +17,12 @@ static const int STEP_GOALS[] = {5000, 8000, 10000, 15000, 20000};
 #define STEP_GOAL_COUNT 5
 #define PERSIST_KEY_GOAL 0
 
-/* ── Mario physics ─────────────────────────────────────────── */
-#define MARIO_X        30   /* fixed screen X for Mario          */
-#define JUMP_VEL      -14   /* initial jump velocity (px/frame)  */
-#define GRAVITY         2   /* downward accel per frame          */
-#define ANIM_INTERVAL  80   /* ms per animation frame            */
+/* ── Mario animation ───────────────────────────────────────── */
+#define MARIO_X          30   /* fixed screen X for Mario            */
+#define ANIM_INTERVAL    80   /* ms per animation frame              */
+#define FLICK_ANIM_FRAMES 20  /* walk frames to show after a flick   */
+/* Each flick advances 20% of the level scroll range */
+#define FLICK_SCROLL_PX  (LEVEL_SCROLL_W / 5)
 
 /* ── Resource IDs for level strips ────────────────────────── */
 static const uint32_t STRIP_RES[15] = {
@@ -55,10 +56,9 @@ static GBitmap    *s_strip_bmp[2];
 #define MARIO_JUMP  5
 static GBitmap    *s_sprite[6];
 static int         s_sprite_h[6];
-static int         s_anim_frame  = 0;
-static bool        s_jumping     = false;
-static int         s_mario_vy    = 0;
-static int         s_mario_y_off = 0;
+static int         s_anim_frame        = 0;
+static int         s_anim_frames_left  = 0; /* >0 = walk cycle running  */
+static int         s_scroll_bonus      = 0; /* extra px from wrist flicks */
 
 /* HUD data */
 static int         s_battery     = 100;
@@ -109,6 +109,12 @@ static void update_scroll(void) {
     s_scroll_x = sx;
 }
 
+static int effective_scroll(void) {
+    int ex = s_scroll_x + s_scroll_bonus;
+    if (ex > LEVEL_SCROLL_W) ex = LEVEL_SCROLL_W;
+    return ex;
+}
+
 /* ── Draw callback ──────────────────────────────────────────*/
 static void draw_layer(Layer *layer, GContext *ctx) {
     /* 1. Sky strip (HUD bottom → level top) */
@@ -117,7 +123,7 @@ static void draw_layer(Layer *layer, GContext *ctx) {
                        0, GCornerNone);
 
     /* 2. Level image via strips */
-    int sx     = s_scroll_x;
+    int sx     = effective_scroll();
     int s_idx  = sx / STRIP_W;
     int s_idx2 = (sx + SCREEN_W - 1) / STRIP_W;
     if (s_idx2 >= 15) s_idx2 = 14;
@@ -156,21 +162,23 @@ static void draw_layer(Layer *layer, GContext *ctx) {
         }
     }
 
-    /* 3. Mario */
+    /* 3. Mario — GCompOpSet respects the transparent palette entry */
     int sp_idx;
-    if (s_jumping) {
-        sp_idx = MARIO_JUMP;
-    } else {
+    if (s_anim_frames_left > 0) {
         static const int wmap[] = {MARIO_WALK1, MARIO_WALK2, MARIO_WALK3, MARIO_WALK4};
-        sp_idx = (s_steps > 0) ? wmap[s_anim_frame % 4] : MARIO_STAND;
+        sp_idx = wmap[s_anim_frame % 4];
+    } else {
+        sp_idx = MARIO_STAND;
     }
     GBitmap *mario_bmp = s_sprite[sp_idx];
     if (mario_bmp) {
         int mh      = s_sprite_h[sp_idx];
-        int mario_y = GROUND_WATCH_Y - mh - s_mario_y_off;
+        int mario_y = GROUND_WATCH_Y - mh;
         GRect mb    = gbitmap_get_bounds(mario_bmp);
+        graphics_context_set_compositing_mode(ctx, GCompOpSet);
         graphics_draw_bitmap_in_rect(ctx, mario_bmp,
             GRect(MARIO_X, mario_y, mb.size.w, mh));
+        graphics_context_set_compositing_mode(ctx, GCompOpAssign);
     }
 
     /* 4. HUD bar */
@@ -229,22 +237,13 @@ static void draw_layer(Layer *layer, GContext *ctx) {
     }
 }
 
-/* ── Animation timer ─────────────────────────────────────── */
+/* ── Animation timer — only runs while walk animation is active ── */
 static void anim_callback(void *ctx) {
     s_anim_timer = NULL;
 
-    if (!s_jumping) {
+    if (s_anim_frames_left > 0) {
+        s_anim_frames_left--;
         s_anim_frame = (s_anim_frame + 1) % 4;
-    }
-
-    if (s_jumping) {
-        s_mario_vy    += GRAVITY;
-        s_mario_y_off -= s_mario_vy;
-        if (s_mario_y_off <= 0) {
-            s_mario_y_off = 0;
-            s_mario_vy    = 0;
-            s_jumping     = false;
-        }
     }
 
     if (s_show_goal) {
@@ -253,7 +252,11 @@ static void anim_callback(void *ctx) {
     }
 
     layer_mark_dirty(s_canvas);
-    s_anim_timer = app_timer_register(ANIM_INTERVAL, anim_callback, NULL);
+
+    /* keep ticking while animation or overlay is still active */
+    if (s_anim_frames_left > 0 || s_show_goal) {
+        s_anim_timer = app_timer_register(ANIM_INTERVAL, anim_callback, NULL);
+    }
 }
 
 /* ── Tick handler ───────────────────────────────────────────*/
@@ -294,31 +297,42 @@ static void battery_handler(BatteryChargeState state) {
     layer_mark_dirty(s_canvas);
 }
 
-/* ── AccelTap → jump ────────────────────────────────────────*/
-static void tap_handler(AccelAxisType axis, int32_t direction) {
-    if (!s_jumping) {
-        s_jumping   = true;
-        s_mario_vy  = JUMP_VEL;
+/* ── Ensure timer is running (used when animation needs to start) ── */
+static void ensure_timer(void) {
+    if (!s_anim_timer) {
+        s_anim_timer = app_timer_register(ANIM_INTERVAL, anim_callback, NULL);
     }
+}
+
+/* ── AccelTap → advance 20% of scroll + run animation ──────────── */
+static void tap_handler(AccelAxisType axis, int32_t direction) {
+    s_scroll_bonus += FLICK_SCROLL_PX;
+    if (s_scroll_x + s_scroll_bonus > LEVEL_SCROLL_W) {
+        s_scroll_bonus = LEVEL_SCROLL_W - s_scroll_x;
+    }
+    s_anim_frames_left = FLICK_ANIM_FRAMES;
+    ensure_timer();
 }
 
 /* ── Buttons: change step goal ──────────────────────────────*/
 static void up_click(ClickRecognizerRef rec, void *ctx) {
     s_step_goal_idx = (s_step_goal_idx + 1) % STEP_GOAL_COUNT;
     persist_write_int(PERSIST_KEY_GOAL, s_step_goal_idx);
+    s_scroll_bonus = 0;  /* reset bonus when goal changes */
     update_scroll();
     s_show_goal = true;
     s_goal_ms   = 2000;
-    layer_mark_dirty(s_canvas);
+    ensure_timer();
 }
 
 static void down_click(ClickRecognizerRef rec, void *ctx) {
     s_step_goal_idx = (s_step_goal_idx + STEP_GOAL_COUNT - 1) % STEP_GOAL_COUNT;
     persist_write_int(PERSIST_KEY_GOAL, s_step_goal_idx);
+    s_scroll_bonus = 0;
     update_scroll();
     s_show_goal = true;
     s_goal_ms   = 2000;
-    layer_mark_dirty(s_canvas);
+    ensure_timer();
 }
 
 static void click_config(void *ctx) {
@@ -363,8 +377,6 @@ static void window_load(Window *window) {
     s_battery = bcs.charge_percent;
 
     accel_tap_service_subscribe(tap_handler);
-
-    s_anim_timer = app_timer_register(ANIM_INTERVAL, anim_callback, NULL);
 }
 
 static void window_unload(Window *window) {
