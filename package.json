@@ -1,0 +1,23 @@
+{
+  "name": "mario-bros-3",
+  "author": "Brooman Inks",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Mario Bros 3",
+    "uuid": "0edbd61e-917e-4ba3-8c82-2195bcd8ce2f",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": ["emery"],
+    "watchapp": { "watchface": true },
+    "capabilities": ["location", "health"],
+    "messageKeys": [
+      "TEMPERATURE",
+      "CONDITIONS",
+      "REQUEST_WEATHER"
+    ],
+    "resources": { "media": [] }
+  }
+}

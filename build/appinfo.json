@@ -1,0 +1,34 @@
+{
+    "displayName": "Mario Bros 3",
+    "uuid": "0edbd61e-917e-4ba3-8c82-2195bcd8ce2f",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+        "emery"
+    ],
+    "watchapp": {
+        "watchface": true
+    },
+    "capabilities": [
+        "health",
+        "location"
+    ],
+    "messageKeys": {
+        "TEMPERATURE": 10000,
+        "CONDITIONS": 10001,
+        "REQUEST_WEATHER": 10002
+    },
+    "resources": {
+        "media": []
+    },
+    "name": "mario-bros-3",
+    "shortName": "Mario Bros 3",
+    "longName": "Mario Bros 3",
+    "versionLabel": "1.0.0",
+    "companyName": "Brooman Inks",
+    "appKeys": {
+        "TEMPERATURE": 10000,
+        "CONDITIONS": 10001,
+        "REQUEST_WEATHER": 10002
+    }
+}
