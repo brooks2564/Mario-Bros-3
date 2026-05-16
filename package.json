@@ -18,6 +18,30 @@
       "CONDITIONS",
       "REQUEST_WEATHER"
     ],
-    "resources": { "media": [] }
+    "resources": {
+      "media": [
+        {"type": "bitmap", "name": "LEVEL_STRIP_00", "file": "level_strip_00.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_01", "file": "level_strip_01.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_02", "file": "level_strip_02.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_03", "file": "level_strip_03.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_04", "file": "level_strip_04.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_05", "file": "level_strip_05.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_06", "file": "level_strip_06.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_07", "file": "level_strip_07.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_08", "file": "level_strip_08.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_09", "file": "level_strip_09.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_10", "file": "level_strip_10.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_11", "file": "level_strip_11.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_12", "file": "level_strip_12.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_13", "file": "level_strip_13.png"},
+        {"type": "bitmap", "name": "LEVEL_STRIP_14", "file": "level_strip_14.png"},
+        {"type": "bitmap", "name": "MARIO_STAND",  "file": "mario_stand.png"},
+        {"type": "bitmap", "name": "MARIO_WALK1",  "file": "mario_walk1.png"},
+        {"type": "bitmap", "name": "MARIO_WALK2",  "file": "mario_walk2.png"},
+        {"type": "bitmap", "name": "MARIO_WALK3",  "file": "mario_walk3.png"},
+        {"type": "bitmap", "name": "MARIO_WALK4",  "file": "mario_walk4.png"},
+        {"type": "bitmap", "name": "MARIO_JUMP",   "file": "mario_jump.png"}
+      ]
+    }
   }
 }
