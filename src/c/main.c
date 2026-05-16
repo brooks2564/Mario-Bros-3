@@ -9,7 +9,7 @@
 #define STRIP_W       200   /* each strip is exactly 200px wide  */
 #define LEVEL_TOTAL_W 2813  /* full level image width            */
 #define LEVEL_SCROLL_W 2613 /* scrollable range (2813-200)       */
-#define GROUND_WATCH_Y 203  /* ground surface in watch coords    */
+#define GROUND_WATCH_Y 200  /* ground surface: LEVEL_Y(61)+level_y(139)=200 */
 #define SKY_TOP_Y       26  /* below HUD                         */
 
 /* ── Step goal options ─────────────────────────────────────── */
@@ -24,6 +24,9 @@ static const int STEP_GOALS[] = {5000, 8000, 10000, 15000, 20000};
 #define RUN_PX_PER_FRAME   7
 /* Each wrist flick queues up 20% of the total scrollable level */
 #define FLICK_SCROLL_PX   (LEVEL_SCROLL_W / 5)
+/* Jump physics */
+#define JUMP_VEL         -14
+#define GRAVITY            2
 
 /* ── Resource IDs for level strips ────────────────────────── */
 static const uint32_t STRIP_RES[15] = {
@@ -60,6 +63,9 @@ static int         s_sprite_h[6];
 static int         s_anim_frame        = 0;
 static int         s_scroll_bonus      = 0; /* px already advanced by flicks */
 static int         s_scroll_remaining  = 0; /* px still to run from queued flicks */
+static bool        s_jumping           = false;
+static int         s_mario_vy          = 0;
+static int         s_mario_y_off       = 0; /* px above ground (positive = up) */
 
 /* HUD data */
 static int         s_battery     = 100;
@@ -165,7 +171,9 @@ static void draw_layer(Layer *layer, GContext *ctx) {
 
     /* 3. Mario — GCompOpSet respects the transparent palette entry */
     int sp_idx;
-    if (s_scroll_remaining > 0) {
+    if (s_jumping || s_mario_y_off > 0) {
+        sp_idx = MARIO_JUMP;
+    } else if (s_scroll_remaining > 0) {
         static const int wmap[] = {MARIO_WALK1, MARIO_WALK2, MARIO_WALK3, MARIO_WALK4};
         sp_idx = wmap[s_anim_frame % 4];
     } else {
@@ -174,7 +182,7 @@ static void draw_layer(Layer *layer, GContext *ctx) {
     GBitmap *mario_bmp = s_sprite[sp_idx];
     if (mario_bmp) {
         int mh      = s_sprite_h[sp_idx];
-        int mario_y = GROUND_WATCH_Y - mh;
+        int mario_y = GROUND_WATCH_Y - mh - s_mario_y_off;
         GRect mb    = gbitmap_get_bounds(mario_bmp);
         graphics_context_set_compositing_mode(ctx, GCompOpSet);
         graphics_draw_bitmap_in_rect(ctx, mario_bmp,
@@ -238,14 +246,13 @@ static void draw_layer(Layer *layer, GContext *ctx) {
     }
 }
 
-/* ── Animation timer — only runs while Mario is running or overlay showing ── */
+/* ── Animation timer ────────────────────────────────────────────────── */
 static void anim_callback(void *ctx) {
     s_anim_timer = NULL;
 
+    /* scroll advance */
     if (s_scroll_remaining > 0) {
-        /* advance scroll by one run step */
         int step = s_scroll_remaining < RUN_PX_PER_FRAME ? s_scroll_remaining : RUN_PX_PER_FRAME;
-        /* don't scroll past end of level */
         int max_bonus = LEVEL_SCROLL_W - s_scroll_x;
         if (s_scroll_bonus + step > max_bonus) step = max_bonus - s_scroll_bonus;
         if (step < 0) step = 0;
@@ -255,6 +262,17 @@ static void anim_callback(void *ctx) {
         s_anim_frame = (s_anim_frame + 1) % 4;
     }
 
+    /* jump physics */
+    if (s_jumping) {
+        s_mario_vy    += GRAVITY;
+        s_mario_y_off -= s_mario_vy;
+        if (s_mario_y_off <= 0) {
+            s_mario_y_off = 0;
+            s_mario_vy    = 0;
+            s_jumping     = false;
+        }
+    }
+
     if (s_show_goal) {
         s_goal_ms -= ANIM_INTERVAL;
         if (s_goal_ms <= 0) s_show_goal = false;
@@ -262,7 +280,7 @@ static void anim_callback(void *ctx) {
 
     layer_mark_dirty(s_canvas);
 
-    if (s_scroll_remaining > 0 || s_show_goal) {
+    if (s_scroll_remaining > 0 || s_jumping || s_mario_y_off > 0 || s_show_goal) {
         s_anim_timer = app_timer_register(ANIM_INTERVAL, anim_callback, NULL);
     }
 }
@@ -312,9 +330,14 @@ static void ensure_timer(void) {
     }
 }
 
-/* ── AccelTap → queue 20% of level distance to run through ─────── */
+/* ── AccelTap → jump + run forward 20% of level ────────────────── */
 static void tap_handler(AccelAxisType axis, int32_t direction) {
-    /* queue up 20% more distance; cap so we don't run past the end */
+    /* jump (only if on ground) */
+    if (!s_jumping && s_mario_y_off == 0) {
+        s_jumping   = true;
+        s_mario_vy  = JUMP_VEL;
+    }
+    /* queue 20% more run distance */
     int headroom = LEVEL_SCROLL_W - s_scroll_x - s_scroll_bonus - s_scroll_remaining;
     int add = FLICK_SCROLL_PX < headroom ? FLICK_SCROLL_PX : headroom;
     if (add < 0) add = 0;
